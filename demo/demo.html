@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>wasm-imager demo</title>
+        <style>
+            body {
+                font-family: system-ui;
+                max-width: 800px;
+                margin: 2rem auto;
+            }
+            .card {
+                border: 1px solid #ccc;
+                padding: 1rem;
+                border-radius: 8px;
+                margin-bottom: 1rem;
+            }
+            button {
+                padding: 8px 16px;
+                background: #0066cc;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            button:hover {
+                background: #004c99;
+            }
+            textarea {
+                width: 100%;
+                box-sizing: border-box;
+                font-family: monospace;
+            }
+            .partition-row {
+                margin-bottom: 12px;
+                padding-bottom: 12px;
+                border-bottom: 1px dashed #eee;
+            }
+            .partition-row:last-child {
+                border-bottom: none;
+                margin-bottom: 0;
+                padding-bottom: 0;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Wasm Imager Demo</h1>
+
+        <div class="card">
+            <h3>Schema JSON Config</h3>
+            <textarea id="schemaText" rows="15">
+                {
+                    "table": "gpt",
+                    "sector": 512,
+                    "partitions": [
+                        {
+                            "id": "efi",
+                            "type": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
+                            "size": 67108864
+                        },
+                        {
+                            "id": "root",
+                            "type": "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+                        }
+                    ]
+                }
+            </textarea>
+            <p>
+                <small
+                    >Hint: table can be <strong>gpt</strong> or
+                    <strong>dos</strong>. Partition type should be Hex encoded
+                    (e.g. <strong>0x83</strong>).</small
+                >
+            </p>
+            <button id="updateUiBtn">
+                Resolve Schema & Refresh Mount List
+            </button>
+        </div>
+
+        <div class="card" id="payloadConfigs">
+            <h3>Partition Payload Configs</h3>
+            <div id="partitionsContainer"></div>
+        </div>
+
+        <div class="card">
+            <button id="startBtn">Start Processing</button>
+            <button id="downloadBtn" style="display: none; background: #28a745">
+                Save Image
+            </button>
+            <p id="status" style="font-weight: bold"></p>
+        </div>
+
+        <script>
+            function generateDummyBlob(sizeInBytes) {
+                return new Blob([new Uint8Array(sizeInBytes).fill(0xcc)]);
+            }
+
+            const schemaText = document.getElementById("schemaText");
+            const partitionsContainer = document.getElementById(
+                "partitionsContainer",
+            );
+
+            function renderPartitions() {
+                try {
+                    const schema = JSON.parse(schemaText.value);
+                    partitionsContainer.innerHTML = "";
+                    schema.partitions.forEach((item) => {
+                        const id = item.id;
+                        const defaultSize = item.size || 10485760; // fallback 到 10MB
+
+                        const div = document.createElement("div");
+                        div.className = "partition-row";
+                        div.innerHTML = `
+                            <strong>ID: [ ${id} ]</strong> 
+                            <span style="color:#666; font-size: 0.9em;">(limit: ${item.size ? item.size + " bytes" : "infinite/auto"})</span><br/>
+                            <label style="display:inline-block; margin-top:8px;">mode:
+                                <select class="mode-select" data-id="${id}">
+                                    <option value="empty">do not mount</option>
+                                    <option value="dummy">fill with dummy data</option>
+                                    <option value="file">choose local file...</option>
+                                </select>
+                            </label>
+                            <input type="number" class="dummy-size" data-id="${id}" placeholder="generate size (bytes)" style="display:none; margin-left: 8px;" value="${defaultSize}" />
+                            <input type="file" class="file-input" data-id="${id}" style="display:none; margin-left: 8px;" />
+                        `;
+                        partitionsContainer.appendChild(div);
+
+                        const select = div.querySelector(".mode-select");
+                        const dummySize = div.querySelector(".dummy-size");
+                        const fileInput = div.querySelector(".file-input");
+
+                        select.addEventListener("change", (e) => {
+                            const val = e.target.value;
+                            dummySize.style.display =
+                                val === "dummy" ? "inline-block" : "none";
+                            fileInput.style.display =
+                                val === "file" ? "inline-block" : "none";
+                        });
+
+                        // use dummy mode by default
+                        select.value = "dummy";
+                        select.dispatchEvent(new Event("change"));
+                    });
+                } catch (e) {
+                    alert("Schema JSON 解析失败，请检查格式是否标准。");
+                }
+            }
+
+            document
+                .getElementById("updateUiBtn")
+                .addEventListener("click", renderPartitions);
+            renderPartitions(); // start at page load
+
+            document
+                .getElementById("startBtn")
+                .addEventListener("click", () => {
+                    const statusEl = document.getElementById("status");
+                    const downloadBtn = document.getElementById("downloadBtn");
+                    statusEl.innerText = "Processing...";
+                    statusEl.style.color = "black";
+                    downloadBtn.style.display = "none";
+
+                    let schema;
+                    try {
+                        schema = JSON.parse(schemaText.value);
+                    } catch (e) {
+                        alert("JSON parse error");
+                        return;
+                    }
+
+                    const filesPayload = {};
+
+                    // form
+                    const selects = document.querySelectorAll(".mode-select");
+                    for (let sel of selects) {
+                        const id = sel.getAttribute("data-id");
+                        const mode = sel.value;
+                        if (mode === "dummy") {
+                            const sizeInput = document.querySelector(
+                                `.dummy-size[data-id="${id}"]`,
+                            );
+                            filesPayload[id] = generateDummyBlob(
+                                parseInt(sizeInput.value),
+                            );
+                        } else if (mode === "file") {
+                            const fileInput = document.querySelector(
+                                `.file-input[data-id="${id}"]`,
+                            );
+                            if (fileInput.files.length > 0) {
+                                filesPayload[id] = fileInput.files[0];
+                            }
+                        }
+                        // 'empty' won't be mounted
+                    }
+
+                    const worker = new Worker("./demo.js", { type: "module" });
+                    worker.postMessage({
+                        schema,
+                        filesPayload,
+                        outputName: "custom_os_image.img",
+                    });
+
+                    worker.onmessage = async (e) => {
+                        if (e.data.status === "done") {
+                            statusEl.style.color = "blue";
+                            statusEl.innerText =
+                                "Process succeeded! Ready to export.";
+                            downloadBtn.style.display = "inline-block";
+                            downloadBtn.onclick = async () => {
+                                try {
+                                    await exportFromOPFS(e.data.fileName);
+                                    statusEl.style.color = "green";
+                                    statusEl.innerText =
+                                        "File exported successfully!";
+                                    downloadBtn.style.display = "none";
+                                } catch (err) {
+                                    statusEl.style.color = "red";
+                                    statusEl.innerText = `Save failed: ${err.message}`;
+                                }
+                            };
+                        } else {
+                            statusEl.style.color = "red";
+                            statusEl.innerText = `Process failed: ${e.data.error}`;
+                        }
+                    };
+                });
+
+            async function exportFromOPFS(fileName) {
+                const root = await navigator.storage.getDirectory();
+                const fileHandle = await root.getFileHandle(fileName);
+                const file = await fileHandle.getFile();
+
+                if ("showSaveFilePicker" in window) {
+                    const saveHandle = await window.showSaveFilePicker({
+                        suggestedName: fileName,
+                        types: [
+                            {
+                                description: "Raw Disk Image",
+                                accept: {
+                                    "application/octet-stream": [".img"],
+                                },
+                            },
+                        ],
+                    });
+                    const writable = await saveHandle.createWritable();
+                    await file.stream().pipeTo(writable);
+                    return;
+                }
+                const url = URL.createObjectURL(file);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
+        </script>
+    </body>
+</html>

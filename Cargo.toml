@@ -1,0 +1,23 @@
+[package]
+name = "wasm-imager"
+version = "0.1.0"
+edition = "2024"
+description = "A WebAssembly based embedded OS image generator/synthesizer."
+authors =["Yukari Chiba <i@0x7f.cc>"]
+license = "MIT"
+repository = "https://github.com/YukariChiba/wasm-imager"
+keywords = ["wasm", "image", "gpt", "mbr"]
+categories = ["wasm"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+gptman = "1.0"
+mbrman = "0.5"
+uuid = { version = "1.8", features =["v4", "js"] }
+getrandom = { version = "0.2", features = ["js"] }
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+tsify = "0.5.6"
