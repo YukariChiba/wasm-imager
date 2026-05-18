@@ -70,14 +70,13 @@ pub fn resolve(
             visible_count += 1;
         }
 
-        if let Some(off) = item.offset {
-            if off % sector_size != 0 {
+        if let Some(off) = item.offset
+            && off % sector_size != 0 {
                 return Err(format!(
                     "Partition {} offset is not aligned to sector",
                     item.id
                 ));
             }
-        }
 
         let file_size = file_sizes.get(&item.id).copied().unwrap_or(0);
 
@@ -119,14 +118,13 @@ pub fn resolve(
             current_lba
         };
 
-        if let Some(le) = last_end {
-            if start_lba <= le {
+        if let Some(le) = last_end
+            && start_lba <= le {
                 return Err(format!(
                     "Partition {} position overlaps or is out of order with previous partition",
                     item.id
                 ));
             }
-        }
 
         let lba_size = actual_size / sector_size;
         let end_lba = start_lba + lba_size - 1;
